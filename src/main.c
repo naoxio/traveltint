@@ -15,14 +15,7 @@ int main(void) {
 
         BeginDrawing();
         ClearBackground(RAYWHITE);
-        
-        // Draw grid
-        for (int i = 0; i < SCREEN_WIDTH; i += 100) {
-            DrawLine(i, 0, i, SCREEN_HEIGHT, Fade(GRAY, 0.3f));
-        }
-        for (int i = 0; i < SCREEN_HEIGHT; i += 100) {
-            DrawLine(0, i, SCREEN_WIDTH, i, Fade(GRAY, 0.3f));
-        }
+
         
         drawWorldMap(map);
         
