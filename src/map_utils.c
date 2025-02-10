@@ -1,14 +1,24 @@
-#include "../include/map_utils.h"
+#include "map_utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h> 
+#include <float.h>
 
 float longitudeToScreenX(float longitude, float zoom, float offsetX) {
-    return ((longitude + 180.0f) * (SCREEN_WIDTH / 360.0f) * zoom) + offsetX;
+    return (longitude + 180.0f) * (SCREEN_WIDTH / 360.0f) * zoom + offsetX;
+}
+
+float screenXToLongitude(float screenX, float zoom, float offsetX) {
+    return (screenX - offsetX) / (SCREEN_WIDTH / 360.0f) / zoom - 180.0f;
 }
 
 float latitudeToScreenY(float latitude, float zoom, float offsetY) {
-    return ((90.0f - latitude) * (SCREEN_HEIGHT / 180.0f) * zoom) + offsetY;
+    return (90.0f - latitude) * (SCREEN_HEIGHT / 180.0f) * zoom + offsetY;
+}
+
+float screenYToLatitude(float screenY, float zoom, float offsetY) {
+    return 90.0f - (screenY - offsetY) / (SCREEN_HEIGHT / 180.0f) / zoom;
 }
 
 void parsePolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, const char* countryName) {
@@ -20,11 +30,9 @@ void parsePolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, con
     size_t pointCount = json_array_get_count(polygon);
     if (pointCount == 0) return;
 
-    // Allocate memory for polygon points
     Vector2* points = (Vector2*)malloc(pointCount * sizeof(Vector2));
     if (!points) return;
 
-    // Find or create country entry
     int countryIdx = -1;
     for (int i = 0; i < map->countryCount; i++) {
         if (strcmp(map->countries[i].name, countryName) == 0) {
@@ -37,18 +45,24 @@ void parsePolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, con
         countryIdx = map->countryCount;
         strncpy(map->countries[map->countryCount].name, countryName, 255);
         map->countries[map->countryCount].name[255] = '\0';
-        map->countries[map->countryCount].polygonPoints = points;
-        map->countries[map->countryCount].pointCount = pointCount;
+        map->countries[map->countryCount].polygonStart = *polygonIndex;
+        map->countries[map->countryCount].polygonCount = 1;
         map->countryCount++;
+    } else {
+        map->countries[countryIdx].polygonCount++;
     }
 
     map->polygons[*polygonIndex].points = points;
     map->polygons[*polygonIndex].numPoints = pointCount;
-    map->polygons[*polygonIndex].color = (Color){
-        100 + (countryIdx * 57) % 155,
-        100 + (countryIdx * 37) % 155,
-        100 + (countryIdx * 17) % 155,
-        255
+    map->polygons[*polygonIndex].color = DEFAULT_LAND_COLOR;
+
+    // Initialize bounds with the first point
+    JSON_Array* firstPoint = json_array_get_array(polygon, 0);
+    float firstLon = (float)json_array_get_number(firstPoint, 0);
+    float firstLat = (float)json_array_get_number(firstPoint, 1);
+    
+    map->polygonBounds[*polygonIndex].bounds = (Rectangle){
+        firstLon, firstLat, firstLon, firstLat
     };
 
     for (size_t j = 0; j < pointCount; j++) {
@@ -57,10 +71,26 @@ void parsePolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, con
         float lon = (float)json_array_get_number(point, 0);
         float lat = (float)json_array_get_number(point, 1);
         points[j] = (Vector2){lon, lat};
+        
+        // Update coordinate bounds (not screen bounds)
+        if (lon < map->polygonBounds[*polygonIndex].bounds.x)
+            map->polygonBounds[*polygonIndex].bounds.x = lon;
+        if (lon > map->polygonBounds[*polygonIndex].bounds.width)
+            map->polygonBounds[*polygonIndex].bounds.width = lon;
+        if (lat < map->polygonBounds[*polygonIndex].bounds.y)
+            map->polygonBounds[*polygonIndex].bounds.y = lat;
+        if (lat > map->polygonBounds[*polygonIndex].bounds.height)
+            map->polygonBounds[*polygonIndex].bounds.height = lat;
     }
+
+    // Convert width/height from max values to actual dimensions
+    map->polygonBounds[*polygonIndex].bounds.width -= map->polygonBounds[*polygonIndex].bounds.x;
+    map->polygonBounds[*polygonIndex].bounds.height -= map->polygonBounds[*polygonIndex].bounds.y;
+    map->polygonBounds[*polygonIndex].isVisible = true;
 
     (*polygonIndex)++;
 }
+
 
 void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, const char* countryName) {
     if (!coordinates || !map || !polygonIndex || !countryName) return;
@@ -98,11 +128,13 @@ void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex
 
         map->polygons[*polygonIndex].points = points;
         map->polygons[*polygonIndex].numPoints = pointCount;
-        map->polygons[*polygonIndex].color = (Color){
-            100 + (countryIdx * 57) % 155,
-            100 + (countryIdx * 37) % 155,
-            100 + (countryIdx * 17) % 155,
-            255
+        map->polygons[*polygonIndex].color = DEFAULT_LAND_COLOR;
+
+        // Initialize bounds
+        map->polygonBounds[*polygonIndex].isVisible = true;
+
+        map->polygonBounds[*polygonIndex].bounds = (Rectangle){
+            FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX
         };
 
         for (size_t j = 0; j < pointCount; j++) {
@@ -111,7 +143,24 @@ void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex
             float lon = (float)json_array_get_number(point, 0);
             float lat = (float)json_array_get_number(point, 1);
             points[j] = (Vector2){lon, lat};
+
+            // Update bounds
+            float screenX = longitudeToScreenX(lon, map->zoom, map->offset.x);
+            float screenY = latitudeToScreenY(lat, map->zoom, map->offset.y);
+            
+            if (screenX < map->polygonBounds[*polygonIndex].bounds.x)
+                map->polygonBounds[*polygonIndex].bounds.x = screenX;
+            if (screenX > map->polygonBounds[*polygonIndex].bounds.width)
+                map->polygonBounds[*polygonIndex].bounds.width = screenX;
+            if (screenY < map->polygonBounds[*polygonIndex].bounds.y)
+                map->polygonBounds[*polygonIndex].bounds.y = screenY;
+            if (screenY > map->polygonBounds[*polygonIndex].bounds.height)
+                map->polygonBounds[*polygonIndex].bounds.height = screenY;
         }
+
+        // Convert width/height from max values to actual dimensions
+        map->polygonBounds[*polygonIndex].bounds.width -= map->polygonBounds[*polygonIndex].bounds.x;
+        map->polygonBounds[*polygonIndex].bounds.height -= map->polygonBounds[*polygonIndex].bounds.y;
 
         (*polygonIndex)++;
     }
@@ -143,22 +192,8 @@ WorldMap* loadWorldMap(const char* filename) {
     size_t featureCount = json_array_get_count(features);
 
     map->countries = (Country*)calloc(featureCount, sizeof(Country));
-    if (!map->countries) {
-        json_value_free(root);
-        UnloadFileText(jsonData);
-        free(map);
-        return NULL;
-    }
-
     map->polygons = (Polygon*)calloc(featureCount * 10, sizeof(Polygon));
-    if (!map->polygons) {
-        free(map->countries);
-        json_value_free(root);
-        UnloadFileText(jsonData);
-        free(map);
-        return NULL;
-    }
-
+    map->polygonBounds = (PolygonBounds*)calloc(featureCount * 10, sizeof(PolygonBounds));
     map->numPolygons = 0;
     
     for (size_t i = 0; i < featureCount; i++) {
@@ -188,12 +223,58 @@ WorldMap* loadWorldMap(const char* filename) {
     UnloadFileText(jsonData);
     return map;
 }
-void drawWorldMap(WorldMap* map) {
+void drawWorldMap(WorldMap* map, const char* selectedCountry) {
+    // Calculate visible coordinate ranges
+    float leftLon = screenXToLongitude(0, map->zoom, map->offset.x);
+    float rightLon = screenXToLongitude(SCREEN_WIDTH, map->zoom, map->offset.x);
+    float topLat = screenYToLatitude(0, map->zoom, map->offset.y);
+    float bottomLat = screenYToLatitude(SCREEN_HEIGHT, map->zoom, map->offset.y);
+
+
+    int visibleCount = 0;
+    
     for (int i = 0; i < map->numPolygons; i++) {
         Polygon* poly = &map->polygons[i];
         
-        // Transform points to screen coordinates
+        // Find polygon bounds in world coordinates
+        float minLon = FLT_MAX, maxLon = -FLT_MAX;
+        float minLat = FLT_MAX, maxLat = -FLT_MAX;
+        
+        for (int j = 0; j < poly->numPoints; j++) {
+            float lon = poly->points[j].x;
+            float lat = poly->points[j].y;
+            
+            minLon = fminf(minLon, lon);
+            maxLon = fmaxf(maxLon, lon);
+            minLat = fminf(minLat, lat);
+            maxLat = fmaxf(maxLat, lat);
+        }
+
+        // Check if polygon is visible
+        bool isVisible = !(maxLon < leftLon || minLon > rightLon || 
+                         maxLat < bottomLat || minLat > topLat);
+
+        if (!isVisible) {
+            continue;
+        }
+
+        visibleCount++;
+
+        // Draw the polygon
+        Color drawColor = DEFAULT_LAND_COLOR;
+        for (int c = 0; c < map->countryCount; c++) {
+            if (map->countries[c].polygonPoints == poly->points) {
+                if (selectedCountry && strcmp(map->countries[c].name, selectedCountry) == 0) {
+                    drawColor = SELECTED_COLOR;
+                }
+                break;
+            }
+        }
+
         Vector2* screenPoints = (Vector2*)malloc(poly->numPoints * sizeof(Vector2));
+        if (!screenPoints) continue;
+
+        // Convert to screen coordinates
         int minY = SCREEN_HEIGHT;
         int maxY = 0;
         
@@ -203,13 +284,16 @@ void drawWorldMap(WorldMap* map) {
                 latitudeToScreenY(poly->points[j].y, map->zoom, map->offset.y)
             };
             
-            if (screenPoints[j].y < minY) minY = screenPoints[j].y;
-            if (screenPoints[j].y > maxY) maxY = screenPoints[j].y;
+            minY = fminf(minY, screenPoints[j].y);
+            maxY = fmaxf(maxY, screenPoints[j].y);
         }
 
-        // Scan line polygon fill algorithm
+        // Clip to screen bounds
+        minY = fmaxf(minY, 0);
+        maxY = fminf(maxY, SCREEN_HEIGHT);
+
+        // Fill polygon
         for (int y = minY; y <= maxY; y++) {
-            // Find intersections with polygon edges
             int intersections[MAX_POINTS];
             int intersectionCount = 0;
             
@@ -218,12 +302,9 @@ void drawWorldMap(WorldMap* map) {
                 float y1 = screenPoints[j].y;
                 float y2 = screenPoints[k].y;
                 
-                // Check if scan line intersects this edge
                 if ((y1 <= y && y2 > y) || (y2 <= y && y1 > y)) {
                     float x1 = screenPoints[j].x;
                     float x2 = screenPoints[k].x;
-                    
-                    // Calculate x-intersection point
                     float x = x1 + (y - y1) * (x2 - x1) / (y2 - y1);
                     intersections[intersectionCount++] = x;
                 }
@@ -240,23 +321,22 @@ void drawWorldMap(WorldMap* map) {
                 }
             }
             
-            // Fill between pairs of intersections
+            // Draw horizontal lines
             for (int j = 0; j < intersectionCount - 1; j += 2) {
-                DrawLine(intersections[j], y, intersections[j + 1], y, poly->color);
+                DrawLine(intersections[j], y, intersections[j + 1], y, drawColor);
             }
         }
-        
+
         // Draw outline
         for (int j = 0; j < poly->numPoints - 1; j++) {
             DrawLineV(screenPoints[j], screenPoints[j + 1], BLACK);
         }
         DrawLineV(screenPoints[poly->numPoints - 1], screenPoints[0], BLACK);
-        
+
         free(screenPoints);
     }
+
 }
-
-
 void unloadWorldMap(WorldMap* map) {
     if (map) {
         for (int i = 0; i < map->numPolygons; i++) {
@@ -267,6 +347,7 @@ void unloadWorldMap(WorldMap* map) {
         }
         free(map->countries);
         free(map->polygons);
+        free(map->polygonBounds);
         free(map);
     }
 }
