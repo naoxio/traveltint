@@ -24,11 +24,18 @@ typedef struct {
 
 typedef struct {
     char name[256];
+    char iso_code[3];
     int polygonStart;
     int polygonCount;
     Vector2* polygonPoints;
     int pointCount;
 } Country;
+
+typedef struct {
+    Texture2D texture;
+    bool loaded;
+} CountryFlag;
+
 
 typedef struct {
     PolygonBounds* polygonBounds;
@@ -38,6 +45,7 @@ typedef struct {
     int countryCount;
     Vector2 offset;
     float zoom;
+    CountryFlag* flags;
 } WorldMap;
 
 float longitudeToScreenX(float longitude, float zoom, float offsetX);

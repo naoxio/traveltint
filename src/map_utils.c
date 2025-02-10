@@ -90,12 +90,29 @@ void parsePolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, con
 
     (*polygonIndex)++;
 }
-
-
 void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex, const char* countryName) {
     if (!coordinates || !map || !polygonIndex || !countryName) return;
 
     size_t polyCount = json_array_get_count(coordinates);
+    
+    // Find or create country first
+    int countryIdx = -1;
+    for (int i = 0; i < map->countryCount; i++) {
+        if (strcmp(map->countries[i].name, countryName) == 0) {
+            countryIdx = i;
+            break;
+        }
+    }
+
+    if (countryIdx == -1) {
+        countryIdx = map->countryCount;
+        strncpy(map->countries[map->countryCount].name, countryName, 255);
+        map->countries[map->countryCount].name[255] = '\0';
+        map->countries[map->countryCount].polygonStart = *polygonIndex;  // Set initial polygon start
+        map->countries[map->countryCount].polygonCount = 0;  // Will increment for each polygon
+        map->countryCount++;
+    }
+
     for (size_t i = 0; i < polyCount; i++) {
         JSON_Array* polygon = json_array_get_array(coordinates, i);
         if (!polygon) continue;
@@ -109,30 +126,12 @@ void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex
         Vector2* points = (Vector2*)malloc(pointCount * sizeof(Vector2));
         if (!points) continue;
 
-        int countryIdx = -1;
-        for (int i = 0; i < map->countryCount; i++) {
-            if (strcmp(map->countries[i].name, countryName) == 0) {
-                countryIdx = i;
-                break;
-            }
-        }
-
-        if (countryIdx == -1) {
-            countryIdx = map->countryCount;
-            strncpy(map->countries[map->countryCount].name, countryName, 255);
-            map->countries[map->countryCount].name[255] = '\0';
-            map->countries[map->countryCount].polygonPoints = points;
-            map->countries[map->countryCount].pointCount = pointCount;
-            map->countryCount++;
-        }
-
         map->polygons[*polygonIndex].points = points;
         map->polygons[*polygonIndex].numPoints = pointCount;
         map->polygons[*polygonIndex].color = DEFAULT_LAND_COLOR;
 
         // Initialize bounds
         map->polygonBounds[*polygonIndex].isVisible = true;
-
         map->polygonBounds[*polygonIndex].bounds = (Rectangle){
             FLT_MAX, FLT_MAX, -FLT_MAX, -FLT_MAX
         };
@@ -145,26 +144,44 @@ void parseMultiPolygon(JSON_Array* coordinates, WorldMap* map, int* polygonIndex
             points[j] = (Vector2){lon, lat};
 
             // Update bounds
-            float screenX = longitudeToScreenX(lon, map->zoom, map->offset.x);
-            float screenY = latitudeToScreenY(lat, map->zoom, map->offset.y);
-            
-            if (screenX < map->polygonBounds[*polygonIndex].bounds.x)
-                map->polygonBounds[*polygonIndex].bounds.x = screenX;
-            if (screenX > map->polygonBounds[*polygonIndex].bounds.width)
-                map->polygonBounds[*polygonIndex].bounds.width = screenX;
-            if (screenY < map->polygonBounds[*polygonIndex].bounds.y)
-                map->polygonBounds[*polygonIndex].bounds.y = screenY;
-            if (screenY > map->polygonBounds[*polygonIndex].bounds.height)
-                map->polygonBounds[*polygonIndex].bounds.height = screenY;
+            if (lon < map->polygonBounds[*polygonIndex].bounds.x)
+                map->polygonBounds[*polygonIndex].bounds.x = lon;
+            if (lon > map->polygonBounds[*polygonIndex].bounds.width)
+                map->polygonBounds[*polygonIndex].bounds.width = lon;
+            if (lat < map->polygonBounds[*polygonIndex].bounds.y)
+                map->polygonBounds[*polygonIndex].bounds.y = lat;
+            if (lat > map->polygonBounds[*polygonIndex].bounds.height)
+                map->polygonBounds[*polygonIndex].bounds.height = lat;
         }
 
         // Convert width/height from max values to actual dimensions
         map->polygonBounds[*polygonIndex].bounds.width -= map->polygonBounds[*polygonIndex].bounds.x;
         map->polygonBounds[*polygonIndex].bounds.height -= map->polygonBounds[*polygonIndex].bounds.y;
 
+        // Increment the country's polygon count
+        map->countries[countryIdx].polygonCount++;
+        
         (*polygonIndex)++;
     }
 }
+
+const char* getIsoCode(JSON_Object* properties) {
+    const char* iso_a2 = json_object_get_string(properties, "iso_a2");
+    
+    // If iso_a2 is invalid, try iso_a2_eh
+    if (!iso_a2 || strcmp(iso_a2, "-99") == 0) {
+        iso_a2 = json_object_get_string(properties, "iso_a2_eh");
+    }
+    
+    // If still invalid, could add more fallbacks here
+    if (!iso_a2 || strcmp(iso_a2, "-99") == 0) {
+        return NULL;
+    }
+    
+    return iso_a2;
+}
+
+
 
 WorldMap* loadWorldMap(const char* filename) {
     WorldMap* map = (WorldMap*)malloc(sizeof(WorldMap));
@@ -194,13 +211,17 @@ WorldMap* loadWorldMap(const char* filename) {
     map->countries = (Country*)calloc(featureCount, sizeof(Country));
     map->polygons = (Polygon*)calloc(featureCount * 10, sizeof(Polygon));
     map->polygonBounds = (PolygonBounds*)calloc(featureCount * 10, sizeof(PolygonBounds));
+    map->flags = (CountryFlag*)calloc(featureCount, sizeof(CountryFlag)); 
     map->numPolygons = 0;
     
+
     for (size_t i = 0; i < featureCount; i++) {
         JSON_Object* feature = json_array_get_object(features, i);
         JSON_Object* properties = json_object_get_object(feature, "properties");
         const char* countryName = json_object_get_string(properties, "name");
-        if (!countryName) continue;
+        const char* isoCode = getIsoCode(properties);
+        
+        if (!countryName || !isoCode) continue;
         
         JSON_Object* geometry = json_object_get_object(feature, "geometry");
         if (!geometry) continue;
@@ -217,6 +238,10 @@ WorldMap* loadWorldMap(const char* filename) {
         else if (strcmp(type, "MultiPolygon") == 0) {
             parseMultiPolygon(coordinates, map, &map->numPolygons, countryName);
         }
+
+        map->countries[map->countryCount].iso_code[0] = tolower(isoCode[0]);
+        map->countries[map->countryCount].iso_code[1] = tolower(isoCode[1]);
+        map->countries[map->countryCount].iso_code[2] = '\0';
     }
 
     json_value_free(root);
@@ -229,7 +254,6 @@ void drawWorldMap(WorldMap* map, const char* selectedCountry) {
     float rightLon = screenXToLongitude(SCREEN_WIDTH, map->zoom, map->offset.x);
     float topLat = screenYToLatitude(0, map->zoom, map->offset.y);
     float bottomLat = screenYToLatitude(SCREEN_HEIGHT, map->zoom, map->offset.y);
-
 
     int visibleCount = 0;
     
@@ -262,13 +286,23 @@ void drawWorldMap(WorldMap* map, const char* selectedCountry) {
 
         // Draw the polygon
         Color drawColor = DEFAULT_LAND_COLOR;
+        
+        // Find which country this polygon belongs to
         for (int c = 0; c < map->countryCount; c++) {
-            if (map->countries[c].polygonPoints == poly->points) {
-                if (selectedCountry && strcmp(map->countries[c].name, selectedCountry) == 0) {
-                    drawColor = SELECTED_COLOR;
+            Country* country = &map->countries[c];
+            bool isCountryPolygon = false;
+            
+            // Check if this polygon belongs to the current country
+            for (int p = 0; p < country->polygonCount; p++) {
+                if (i == country->polygonStart + p) {
+                    isCountryPolygon = true;
+                    if (selectedCountry && strcmp(country->name, selectedCountry) == 0) {
+                        drawColor = SELECTED_COLOR;
+                    }
+                    break;
                 }
-                break;
             }
+            if (isCountryPolygon) break;
         }
 
         Vector2* screenPoints = (Vector2*)malloc(poly->numPoints * sizeof(Vector2));
@@ -335,7 +369,6 @@ void drawWorldMap(WorldMap* map, const char* selectedCountry) {
 
         free(screenPoints);
     }
-
 }
 void unloadWorldMap(WorldMap* map) {
     if (map) {
@@ -343,11 +376,15 @@ void unloadWorldMap(WorldMap* map) {
             free(map->polygons[i].points);
         }
         for (int i = 0; i < map->countryCount; i++) {
+            if (map->flags[i].loaded) {
+                UnloadTexture(map->flags[i].texture);
+            }
             free(map->countries[i].polygonPoints);
         }
         free(map->countries);
         free(map->polygons);
         free(map->polygonBounds);
+        free(map->flags);
         free(map);
     }
 }
