@@ -14,11 +14,20 @@ typedef struct {
 } Polygon;
 
 typedef struct {
-    Polygon* polygons;
+    char name[256]; 
+    Vector2* polygonPoints; 
+    int pointCount;         
+} Country;
+
+typedef struct {
+    Country* countries;      
+    int countryCount;  
+    Polygon* polygons;      
     int numPolygons;
     Vector2 offset;
     float zoom;
 } WorldMap;
+
 
 // Function declarations
 float longitudeToScreenX(float longitude, float zoom, float offsetX);
@@ -26,6 +35,5 @@ float latitudeToScreenY(float latitude, float zoom, float offsetY);
 WorldMap* loadWorldMap(const char* filename);
 void drawWorldMap(WorldMap* map);
 void unloadWorldMap(WorldMap* map);
-void handleMapInput(WorldMap* map);
 
 #endif
