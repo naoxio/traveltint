@@ -239,7 +239,7 @@ WorldMap* loadWorldMap(const char* filename) {
     UnloadFileText(jsonData);
     return map;
 }
-void drawWorldMap(WorldMap* map, const char* selectedCountry) {
+void drawWorldMap(WorldMap* map, const char* selectedCountry, CountryStatusList* statusList) {
     // Calculate visible coordinate ranges
     float leftLon = screenXToLongitude(0, map->zoom, map->offset.x);
     float rightLon = screenXToLongitude(SCREEN_WIDTH, map->zoom, map->offset.x);
@@ -275,20 +275,33 @@ void drawWorldMap(WorldMap* map, const char* selectedCountry) {
 
         visibleCount++;
 
-        // Draw the polygon
         Color drawColor = DEFAULT_LAND_COLOR;
         
-        // Find which country this polygon belongs to
         for (int c = 0; c < map->countryCount; c++) {
             Country* country = &map->countries[c];
             bool isCountryPolygon = false;
             
-            // Check if this polygon belongs to the current country
             for (int p = 0; p < country->polygonCount; p++) {
                 if (i == country->polygonStart + p) {
                     isCountryPolygon = true;
-                    if (selectedCountry && strcmp(country->name, selectedCountry) == 0) {
-                        drawColor = SELECTED_COLOR;
+                    
+                    int status = GetCountryStatus(statusList, country->iso_code);
+                    bool isSelected = selectedCountry && strcmp(country->name, selectedCountry) == 0;
+                    
+                   switch(status) {
+                        case STATUS_BEEN:
+                            drawColor = isSelected ? STATUS_BEEN_SELECTED_COLOR : STATUS_BEEN_COLOR;
+                            break;
+                        case STATUS_LIVED:
+                            drawColor = isSelected ? STATUS_LIVED_SELECTED_COLOR : STATUS_LIVED_COLOR;
+                            break;
+                        case STATUS_WANT:
+                            drawColor = isSelected ? STATUS_WANT_SELECTED_COLOR : STATUS_WANT_COLOR;
+                            break;
+                        case STATUS_NONE:
+                        default:
+                            drawColor = isSelected ? STATUS_NONE_SELECTED_COLOR : STATUS_NONE_COLOR;
+                            break;
                     }
                     break;
                 }
@@ -378,4 +391,66 @@ void unloadWorldMap(WorldMap* map) {
         free(map->flags);
         free(map);
     }
+}
+
+
+
+void SaveCountryStatuses(const char* filename, CountryStatusList* list) {
+    FILE* file = fopen(filename, "wb");
+    if (!file) return;
+    
+    fwrite(&list->count, sizeof(int), 1, file);
+    fwrite(list->statuses, sizeof(CountryStatus), list->count, file);
+    fclose(file);
+}
+CountryStatusList* LoadCountryStatuses(const char* filename) {
+    CountryStatusList* list = (CountryStatusList*)malloc(sizeof(CountryStatusList));
+    list->count = 0;
+    list->statuses = NULL;
+    
+    FILE* file = fopen(filename, "rb");
+    if (!file) return list;
+    
+    size_t read = fread(&list->count, sizeof(int), 1, file);
+    if (read != 1) {
+        fclose(file);
+        return list;
+    }
+    
+    list->statuses = (CountryStatus*)malloc(sizeof(CountryStatus) * list->count);
+    read = fread(list->statuses, sizeof(CountryStatus), list->count, file);
+    if (read != list->count) {
+        free(list->statuses);
+        list->statuses = NULL;
+        list->count = 0;
+    }
+    
+    fclose(file);
+    return list;
+}
+
+
+void UpdateCountryStatus(CountryStatusList* list, const char* iso_code, int status) {
+    // Find existing entry
+    for (int i = 0; i < list->count; i++) {
+        if (strcmp(list->statuses[i].iso_code, iso_code) == 0) {
+            list->statuses[i].status = status;
+            return;
+        }
+    }
+    
+    // Add new entry
+    list->count++;
+    list->statuses = (CountryStatus*)realloc(list->statuses, sizeof(CountryStatus) * list->count);
+    strncpy(list->statuses[list->count-1].iso_code, iso_code, 3);
+    list->statuses[list->count-1].status = status;
+}
+
+int GetCountryStatus(CountryStatusList* list, const char* iso_code) {
+    for (int i = 0; i < list->count; i++) {
+        if (strcmp(list->statuses[i].iso_code, iso_code) == 0) {
+            return list->statuses[i].status;
+        }
+    }
+    return STATUS_NONE;
 }
