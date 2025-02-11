@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>TravelTint - Interactive World Map</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #2c2c2c;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        
+        canvas {
+            border-radius: 8px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.3);
+        }
+        
+        .emscripten {
+            padding-right: 0;
+            margin-left: auto;
+            margin-right: auto;
+            display: block;
+        }
+        
+        #status {
+            color: #white;
+            text-align: center;
+            margin: 1em 0;
+        }
+        
+        .spinner {
+            height: 30px;
+            width: 30px;
+            margin: 20px;
+            display: inline-block;
+            vertical-align: top;
+            animation: rotation 1s linear infinite;
+            border: 4px solid #ffffff;
+            border-top: 4px solid #787878;
+            border-radius: 100%;
+        }
+        
+        @keyframes rotation {
+            from {transform: rotate(0deg)}
+            to {transform: rotate(359deg)}
+        }
+    </style>
+</head>
+<body>
+    <div id="status">Loading...</div>
+    <div class="spinner" id='spinner'></div>
+    <div class="emscripten" id="canvas-container">
+        <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex=-1></canvas>
+    </div>
+    <script type='text/javascript'>
+        var statusElement = document.getElementById('status');
+        var spinnerElement = document.getElementById('spinner');
+
+        var Module = {
+            preRun: [],
+            postRun: [],
+            print: (function() {
+                return function(text) {
+                    if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                    console.log(text);
+                };
+            })(),
+            printErr: function(text) {
+                if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+                console.error(text);
+            },
+            canvas: (function() {
+                var canvas = document.getElementById('canvas');
+                canvas.addEventListener("webglcontextlost", function(e) { 
+                    alert('WebGL context lost. You will need to reload the page.'); 
+                    e.preventDefault(); 
+                }, false);
+                return canvas;
+            })(),
+            setStatus: function(text) {
+                if (!Module.setStatus.last) Module.setStatus.last = { time: Date.now(), text: '' };
+                if (text === Module.setStatus.last.text) return;
+                var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+                var now = Date.now();
+                if (m && now - Module.setStatus.last.time < 30) return;
+                Module.setStatus.last.time = now;
+                Module.setStatus.last.text = text;
+                if (m) {
+                    text = m[1];
+                    spinnerElement.hidden = false;
+                } else {
+                    if (!text) spinnerElement.hidden = true;
+                }
+                statusElement.innerHTML = text;
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function(left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+            }
+        };
+        Module.setStatus('Downloading...');
+        window.onerror = function() {
+            Module.setStatus('Exception thrown, see JavaScript console');
+            spinnerElement.style.display = 'none';
+            Module.setStatus = function(text) {
+                if (text) console.error('[post-exception status] ' + text);
+            };
+        };
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

@@ -1,44 +1,71 @@
 { pkgs ? import <nixpkgs> {} }:
 
 let
-  pythonVersion = "3.12"; # Specify Python version
-  pythonPackages = pkgs.python312Packages; # Use Python 3.12 packages
+  pythonVersion = "3.12";
+  pythonPackages = pkgs.python312Packages;
 in
 pkgs.mkShell {
-  # Define build inputs (dependencies)
   buildInputs = [
-    pkgs.gcc                     # Compiler
-    pkgs.stdenv.cc.cc.lib        # Ensure libstdc++.so.6 is available
-    pkgs.zlib                    # Add zlib (provides libz.so.1)
-    pkgs.raylib                  # Raylib library
-    pkgs.xorg.libX11             # X11 library
-    pkgs.mesa.drivers            # OpenGL library (includes libGL)
-    pkgs.python312               # Python 3.12 interpreter
-    pkgs.glibc                   # GNU C Library
+    # Base development tools
+    pkgs.gcc
+    pkgs.stdenv.cc.cc.lib
+    pkgs.zlib
+    pkgs.raylib
+    pkgs.xorg.libX11
+    pkgs.mesa.drivers
+    pkgs.python312
+    pkgs.glibc
+
+    # Emscripten and web development tools
+    pkgs.emscripten
+    pkgs.llvmPackages.clang
+    pkgs.cmake
+    pkgs.nodejs
+    pkgs.binaryen
+    pkgs.git
+    pkgs.pkg-config
   ];
 
-  # Add Python packages to the environment
   nativeBuildInputs = [
-    pythonPackages.virtualenv     # Virtualenv for creating .venv
-    pythonPackages.pip            # Pip for installing Python packages
-    pythonPackages.setuptools     # Setuptools for package management
+    pythonPackages.virtualenv
+    pythonPackages.pip
+    pythonPackages.setuptools
   ];
 
-  # Set environment variables
   shellHook = ''
-    # Ensure Python 3.12 is used
+    # Basic environment setup
     export PATH="${pkgs.python312}/bin:$PATH"
-
-    # Ensure libstdc++.so.6 and libz.so.1 are in the library path
     export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.zlib}/lib:$LD_LIBRARY_PATH"
 
-    # Create a virtual environment if it doesn't exist
+    # Emscripten setup
+    export EMSDK=${pkgs.emscripten}
+    export EMSCRIPTEN=${pkgs.emscripten}/share/emscripten
+    export EMSCRIPTEN_ROOT=${pkgs.emscripten}/share/emscripten
+    export LLVM_ROOT=${pkgs.llvmPackages.clang}/bin
+    export BINARYEN_ROOT=${pkgs.binaryen}
+    export PATH="$EMSCRIPTEN:$LLVM_ROOT:$PATH"
+
+    # Create or update Emscripten config
+    cat > "$HOME/.emscripten" << EOF
+    import os
+    LLVM_ROOT = '${pkgs.llvmPackages.clang}/bin'
+    EMSCRIPTEN_ROOT = '${pkgs.emscripten}/share/emscripten'
+    BINARYEN_ROOT = '${pkgs.binaryen}'
+    NODE_JS = '${pkgs.nodejs}/bin/node'
+    PYTHON = '${pkgs.python312}/bin/python3'
+    CACHE = os.path.expanduser('~/.emscripten_cache')
+    PORTS = os.path.expanduser('~/.emscripten_ports')
+    EOF
+
+    # Create cache directory if it doesn't exist
+    mkdir -p ~/.emscripten_cache
+
+    # Python virtual environment setup
     if [ ! -d ".venv" ]; then
       echo "Creating virtual environment in .venv..."
       virtualenv --python=${pkgs.python312}/bin/python3 .venv
     fi
 
-    # Activate the virtual environment
     if [ -f ".venv/bin/activate" ]; then
       source .venv/bin/activate
     else
@@ -46,16 +73,16 @@ pkgs.mkShell {
       exit 1
     fi
 
-    # Install required Python packages into the virtual environment
     if [ ! -f ".venv/.installed" ]; then
       echo "Installing Python dependencies..."
       pip install numpy geopandas
       touch .venv/.installed
     fi
 
-    # Provide a helpful message when entering the shell
+    # Environment information
     echo "Environment ready for building your project."
     echo "Python 3.12 virtual environment is activated."
-    echo "Run 'python' to start the interpreter."
+    echo "Emscripten is configured and ready to use."
+    echo "Run 'emcc --version' to verify Emscripten installation."
   '';
 }

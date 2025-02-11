@@ -14,6 +14,8 @@
 #define SPACE_BG_COLOR (Color){10, 15, 30, 255}         // Dark blue for space background
 #define UI_PANEL_COLOR (Color){20, 25, 40, 230}    
 
+#define SPACE_BG_COLOR CLITERAL(Color){ 1, 1, 3, 255 }  // Very dark blue color
+
 // For each status, add a selected variant
 #define STATUS_BEEN_SELECTED_COLOR   (Color){150, 215, 255, 255}
 #define STATUS_LIVED_SELECTED_COLOR  (Color){210, 170, 255, 255}

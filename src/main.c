@@ -48,27 +48,32 @@ void drawNebulaSkyBackground(Shader starShader, float timeValue) {
 }
 
 int main(void) {
-    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "World Map");
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Traveltint");
     SetTargetFPS(60);
 
+    #ifndef PLATFORM_WEB
     Shader starShader = LoadShader("shaders/stars.vs", "shaders/stars.fs");
-    if (starShader.id == 0) {
+    bool useShader = starShader.id != 0;
+    
+    if (!useShader) {
         printf("ERROR: Shader failed to compile!\n");
-        CloseWindow();
-        return 1;
+    } else {
+        int timeLoc = GetShaderLocation(starShader, "time");
+        int screenSizeLoc = GetShaderLocation(starShader, "screenWidth");
+        int screenHeightLoc = GetShaderLocation(starShader, "screenHeight");
+
+        printf("Time Location: %d\n", timeLoc);
+        printf("Screen Width Location: %d\n", screenSizeLoc);
+        printf("Screen Height Location: %d\n", screenHeightLoc);
+
+        if (timeLoc == -1 || screenSizeLoc == -1 || screenHeightLoc == -1) {
+            printf("ERROR: Failed to get shader uniform locations!\n");
+            useShader = false;
+        }
     }
-
-    int timeLoc = GetShaderLocation(starShader, "time");
-    int screenSizeLoc = GetShaderLocation(starShader, "screenWidth");
-    int screenHeightLoc = GetShaderLocation(starShader, "screenHeight");
-
-    printf("Time Location: %d\n", timeLoc);
-    printf("Screen Width Location: %d\n", screenSizeLoc);
-    printf("Screen Height Location: %d\n", screenHeightLoc);
-
-    if (timeLoc == -1 || screenSizeLoc == -1 || screenHeightLoc == -1) {
-        printf("ERROR: Failed to get shader uniform locations!\n");
-    }
+    #else
+    bool useShader = false;
+    #endif
 
     RenderTexture2D starTarget = LoadRenderTexture(SCREEN_WIDTH, SCREEN_HEIGHT);
 
@@ -197,8 +202,12 @@ int main(void) {
         BeginDrawing();
         ClearBackground(SPACE_BG_COLOR);
 
-        float timeValue = (float)GetTime();
-        drawNebulaSkyBackground(starShader, timeValue);
+        if (useShader) {
+            #ifndef PLATFORM_WEB
+            float timeValue = (float)GetTime();
+            drawNebulaSkyBackground(starShader, timeValue);
+            #endif
+        }
 
         drawWorldMap(map, clickedCountry, statusList);
 
@@ -267,7 +276,13 @@ int main(void) {
     free(statusList->statuses);
     free(statusList);
     unloadWorldMap(map);
-    UnloadShader(starShader);
+    
+    #ifndef PLATFORM_WEB
+    if (useShader) {
+        UnloadShader(starShader);
+    }
+    #endif
+    
     UnloadRenderTexture(starTarget);
     CloseWindow();
     return 0;
