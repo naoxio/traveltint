@@ -46,7 +46,12 @@ void drawNebulaSkyBackground(Shader starShader, float timeValue) {
     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, WHITE);
     EndShaderMode();
 }
+// Add this helper function to your map_utils.h
+float lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
 
+// Complete main function with smooth zooming
 int main(void) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Traveltint");
     SetTargetFPS(60);
@@ -83,6 +88,10 @@ int main(void) {
         return 1;
     }
 
+    // Add these variables for smooth zooming
+    float targetZoom = map->zoom;
+    float zoomSmoothFactor = 0.2f;  // Lower = smoother but slower transitions
+
     CountryStatusList* statusList = LoadCountryStatuses("country_statuses.dat");
     char clickedCountry[256] = "";
     Vector2 dragStart = {0, 0};
@@ -98,25 +107,39 @@ int main(void) {
         if (IsKeyDown(KEY_DOWN)) map->offset.y -= 5.0f;
         if (IsKeyDown(KEY_UP)) map->offset.y += 5.0f;
         
+        // Updated mouse wheel zoom handling
         float wheel = GetMouseWheelMove();
         if (wheel != 0) {
-            float prevZoom = map->zoom;
-            float zoomSpeed = map->zoom * 0.15f;
-            map->zoom += wheel * zoomSpeed;
+            Vector2 mousePos = GetMousePosition();
+            Vector2 worldPos = {
+                (mousePos.x - map->offset.x) / map->zoom,
+                (mousePos.y - map->offset.y) / map->zoom
+            };
             
-            if (map->zoom < 0.1f) map->zoom = 0.1f;
-            if (map->zoom > 25.0f) map->zoom = 25.0f;
+            // Use exponential zooming for more natural feel
+            float zoomFactor = powf(1.1f, wheel);
+            targetZoom *= zoomFactor;
+            
+            // Apply limits
+            if (targetZoom < 0.1f) targetZoom = 0.1f;
+            if (targetZoom > 25.0f) targetZoom = 25.0f;
+        }
 
-            if (map->zoom != prevZoom) {
-                Vector2 mousePos = GetMousePosition();
-                float zoomFactor = map->zoom / prevZoom;
-                Vector2 mouseWorld = {
-                    (mousePos.x - map->offset.x) / prevZoom,
-                    (mousePos.y - map->offset.y) / prevZoom
-                };
-                map->offset.x = mousePos.x - mouseWorld.x * map->zoom;
-                map->offset.y = mousePos.y - mouseWorld.y * map->zoom;
-            }
+        // Apply smooth zooming - do this BEFORE drawing
+        if (fabsf(targetZoom - map->zoom) > 0.001f) {
+            // Store mouse position in world coordinates
+            Vector2 mousePos = GetMousePosition();
+            Vector2 worldPos = {
+                (mousePos.x - map->offset.x) / map->zoom,
+                (mousePos.y - map->offset.y) / map->zoom
+            };
+            
+            // Smoothly interpolate toward target zoom
+            map->zoom = lerp(map->zoom, targetZoom, zoomSmoothFactor);
+            
+            // Keep point under cursor stable during zoom
+            map->offset.x = mousePos.x - worldPos.x * map->zoom;
+            map->offset.y = mousePos.y - worldPos.y * map->zoom;
         }
 
         if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
